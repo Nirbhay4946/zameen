@@ -1,5 +1,5 @@
 // Offline app shell. Map tiles are NOT cached by the app (provider terms) — the browser's normal cache still helps.
-const V = 'zameen-v3';
+const V = 'zameen-v4';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/geo.js', 'js/glossary.js', 'js/app.js', 'vendor/leaflet.js', 'vendor/leaflet.css', 'vendor/jszip.min.js',
   'vendor/images/layers.png', 'vendor/images/layers-2x.png', 'vendor/images/marker-icon.png', 'vendor/images/marker-icon-2x.png', 'vendor/images/marker-shadow.png',
   'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];

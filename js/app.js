@@ -199,6 +199,41 @@ function startWatch(cb, err) {
 function stopWatch() { if (S.watch != null) { navigator.geolocation.clearWatch(S.watch); S.watch = null; } }
 const accClass = a => a == null ? '' : a <= 5 ? 'g' : a <= 12 ? 'y' : 'r';
 const gpsErrText = e => e.code === 1 ? 'Location permission denied. Allow location for this site in browser settings.' : e.code === 2 ? 'GPS unavailable — turn on Location (High accuracy) and go to open sky.' : e.code === 3 ? 'Waiting for GPS… (timeout, still trying)' : (e.message || 'GPS error');
+// Big, hard-to-miss help card when GPS is blocked, switched off or slow
+function gpsGuard(restart) {
+  const el = document.createElement('div'); el.className = 'gpshelp panel'; el.hidden = true; document.body.appendChild(el);
+  let timer = null, gotFix = false, dismissed = false;
+  const MSG = {
+    denied: ['📍 Location permission is blocked', `<ol><li>Long-press the 🌾 Zameen icon → <b>App info</b> (or Android Settings → Apps → <b>Zameen</b> / <b>Chrome</b>)</li><li><b>Permissions → Location → Allow only while using the app</b></li><li>Turn <b>Use precise location</b> ON</li><li>Come back and tap <b>Try again</b></li></ol>`],
+    off: ['📡 Turn on Location (GPS)', `<ol><li>Swipe down from the top of the screen</li><li>Tap the <b>Location</b> tile so it turns on</li><li>Best: Settings → Location → Location services → <b>Google Location Accuracy ON</b></li><li>Tap <b>Try again</b></li></ol>`],
+    slow: ['⏳ Still waiting for GPS', `<ul><li>Step outside under <b>open sky</b>, away from walls and big trees</li><li>The first fix can take up to a minute</li><li>Check the <b>Location</b> tile is on (swipe down from top)</li></ul>`]
+  };
+  const show = kind => {
+    if (dismissed && kind === 'slow') return;
+    const [t, b] = MSG[kind];
+    el.innerHTML = `<h3 style="margin:0 0 6px">${t}</h3><div class="small">${b}</div><div class="row" style="margin-top:10px">${kind === 'slow' ? '<button class="btn grow" data-wait>Keep waiting</button>' : ''}<button class="btn p grow bigbtn" data-retry>↻ Try again</button></div>`;
+    el.hidden = false;
+    $('[data-retry]', el).onclick = () => { el.hidden = true; arm(); restart(); };
+    const w = $('[data-wait]', el); if (w) w.onclick = () => { el.hidden = true; dismissed = true; };
+    try { navigator.vibrate && navigator.vibrate(80); } catch (e) { }
+  };
+  const arm = () => { clearTimeout(timer); gotFix = false; timer = setTimeout(() => { if (!gotFix) show('slow'); }, 25000); };
+  try {
+    navigator.permissions.query({ name: 'geolocation' }).then(st => {
+      if (st.state === 'denied') show('denied');
+      st.onchange = () => { if (st.state !== 'denied' && !el.hidden) { el.hidden = true; arm(); restart(); } };
+    }).catch(() => { });
+  } catch (e) { }
+  // when user returns from Settings, retry automatically
+  const vis = () => { if (!document.hidden && !el.hidden) { el.hidden = true; arm(); restart(); } };
+  document.addEventListener('visibilitychange', vis);
+  arm();
+  S.cleanup.push(() => { clearTimeout(timer); document.removeEventListener('visibilitychange', vis); el.remove(); });
+  return {
+    fix() { gotFix = true; clearTimeout(timer); if (!el.hidden) el.hidden = true; },
+    err(e) { if (e.code === 1) show('denied'); else if (e.code === 2) show('off'); else if (!gotFix) show('slow'); }
+  };
+}
 let wakeLock = null;
 async function keepAwake(on) { try { if (on && 'wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; } } catch (e) { } }
 
@@ -701,7 +736,8 @@ function viewCapture(p) {
     p.pts.push({ lat: e.latlng.lat, lng: e.latlng.lng, acc: null, src: 'map', label: 'C' + (p.pts.length + 1), t: Date.now() });
     saveParcel(p); redraw(); panel();
   });
-  startWatch(fix => {
+  const onFix = fix => {
+    guard.fix();
     st.fix = fix;
     $('#gDot').className = 'dot ' + accClass(fix.acc);
     $('#gTxt').innerHTML = `GPS ±<b>${G.fmtN(fix.acc, 1)} m</b> ${fix.acc <= 5 ? '— good' : fix.acc <= 12 ? '— fair, wait a bit' : '— poor, move to open sky'}`;
@@ -716,7 +752,10 @@ function viewCapture(p) {
       else if (!w.last || G.dist(w.last, fix) >= (+S.settings.walkStep || 1)) { w.pts.push(fix); w.last = fix; if (st.track) st.track.addLatLng([fix.lat, fix.lng]); panel(); }
     }
     if (!st.rec && $('#cRec') && $('#cRec').disabled) panel();
-  }, e => { $('#gTxt').textContent = gpsErrText(e); $('#gDot').className = 'dot r'; });
+  };
+  const onErr = e => { $('#gTxt').textContent = gpsErrText(e); $('#gDot').className = 'dot r'; guard.err(e); };
+  const guard = gpsGuard(() => startWatch(onFix, onErr));
+  startWatch(onFix, onErr);
   S.cleanup.push(() => { if (st.rec) { clearInterval(st.rec.timer); clearInterval(st.rec.poll); } st.walk = null; });
   redraw(); panel();
 }
@@ -759,11 +798,14 @@ function viewFind(p) {
   S.cleanup.push(() => { window.removeEventListener('deviceorientationabsolute', onOri); window.removeEventListener('deviceorientation', onOri); });
   if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') { const b = $('#cmp'); b.hidden = false; b.onclick = async () => { try { await DeviceOrientationEvent.requestPermission(); b.hidden = true; } catch (e) { toast('Compass not allowed'); } }; }
   keepAwake(true);
-  startWatch(f => {
-    fix = f; $('#gDot').className = 'dot ' + accClass(f.acc); $('#gTxt').innerHTML = `GPS ±<b>${G.fmtN(f.acc, 1)} m</b>`;
+  const onFix = f => {
+    guard.fix(); fix = f; $('#gDot').className = 'dot ' + accClass(f.acc); $('#gTxt').innerHTML = `GPS ±<b>${G.fmtN(f.acc, 1)} m</b>`;
     if (!me) me = L.marker([f.lat, f.lng], { icon: L.divIcon({ className: 'me', iconSize: null }), interactive: false }).addTo(map); else me.setLatLng([f.lat, f.lng]);
     upd();
-  }, e => { $('#gTxt').textContent = gpsErrText(e); });
+  };
+  const onErr = e => { $('#gTxt').textContent = gpsErrText(e); guard.err(e); };
+  const guard = gpsGuard(() => startWatch(onFix, onErr));
+  startWatch(onFix, onErr);
 }
 
 // ---------------------------------------------------------------- ALL MAP

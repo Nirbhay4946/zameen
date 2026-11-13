@@ -131,3 +131,7 @@ details.card summary{font-weight:700;cursor:pointer}
 }
 .leaflet-container{font:inherit}
 .vx.sm{width:16px!important;height:16px!important;margin:-8px 0 0 -8px!important;font-size:8px;border-width:2px;border-color:#e0a31a;color:#8a5b00}
+.gpshelp{position:fixed;left:10px;right:10px;top:50%;transform:translateY(-50%);z-index:1500;max-width:520px;margin:0 auto;border:2px solid var(--warn)}
+.gpshelp ol,.gpshelp ul{margin:4px 0;padding-left:20px}
+.gpshelp li{margin:3px 0}
+.gpshelp[hidden]{display:none}
